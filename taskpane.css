@@ -1,0 +1,233 @@
+:root {
+  --bg-top: #fdf7e7;
+  --bg-bottom: #f4efe4;
+  --card: #fffdf7;
+  --ink: #1f2a30;
+  --muted: #58656f;
+  --accent: #0f766e;
+  --accent-strong: #0a5c56;
+  --danger: #b54708;
+  --ok: #166534;
+  --ring: rgba(15, 118, 110, 0.25);
+  --border: rgba(17, 24, 39, 0.08);
+  --shadow: 0 14px 40px rgba(31, 42, 48, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: "IBM Plex Sans Arabic", "Cairo", "Tahoma", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(75% 45% at 12% 0%, rgba(251, 191, 36, 0.25) 0%, rgba(251, 191, 36, 0) 100%),
+    radial-gradient(65% 40% at 95% 0%, rgba(14, 165, 233, 0.17) 0%, rgba(14, 165, 233, 0) 100%),
+    linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+  animation: body-fade 380ms ease-out;
+}
+
+.shell {
+  width: min(680px, 94vw);
+  margin: 16px auto;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.9), rgba(255, 252, 242, 0.95));
+  box-shadow: var(--shadow);
+}
+
+.hero {
+  animation: rise 360ms ease-out;
+}
+
+.env-badge {
+  display: inline-block;
+  margin: 0 0 10px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7f1d1d;
+  background: rgba(248, 113, 113, 0.2);
+}
+
+#titleText {
+  margin: 0;
+  font-size: clamp(1.1rem, 1.6vw + 0.9rem, 1.6rem);
+  line-height: 1.25;
+}
+
+#subtitleText {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.panel {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+
+.status {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.status-pending {
+  color: #155e75;
+}
+
+.status-success {
+  color: var(--ok);
+}
+
+.status-error {
+  color: var(--danger);
+}
+
+.action-button {
+  margin-top: 14px;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #ffffff;
+  cursor: pointer;
+  background: linear-gradient(120deg, var(--accent), #0ea5a2);
+  transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.action-button:hover:not([disabled]) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 16px rgba(15, 118, 110, 0.25);
+}
+
+.action-button:active:not([disabled]) {
+  transform: translateY(0);
+}
+
+.action-button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: 0 0 0 4px var(--ring);
+}
+
+.action-button[disabled] {
+  cursor: not-allowed;
+  opacity: 0.65;
+  background: #6b7280;
+}
+
+.result {
+  min-height: 24px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.timeline {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(31, 42, 48, 0.2);
+}
+
+.timeline-title {
+  margin: 0;
+  font-size: 0.84rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #475569;
+}
+
+.timeline-list {
+  margin: 10px 0 0;
+  padding-left: 20px;
+  color: #334155;
+}
+
+.timeline-list li {
+  margin-bottom: 7px;
+  line-height: 1.4;
+  opacity: 0;
+  transform: translateY(6px);
+  animation: reveal 280ms ease-out forwards;
+}
+
+.timeline-list li:nth-child(1) {
+  animation-delay: 100ms;
+}
+
+.timeline-list li:nth-child(2) {
+  animation-delay: 170ms;
+}
+
+.timeline-list li:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+.timeline-list li:nth-child(4) {
+  animation-delay: 310ms;
+}
+
+@keyframes body-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 480px) {
+  .shell {
+    margin: 0;
+    width: 100vw;
+    min-height: 100vh;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+
+  #subtitleText {
+    font-size: 0.9rem;
+  }
+}
