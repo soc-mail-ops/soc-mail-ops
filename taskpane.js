@@ -14,7 +14,8 @@
   var state = {
     config: null,
     isProcessing: false,
-    isCompleted: false
+    isCompleted: false,
+    ewsBlocked: false
   };
 
   var EWS_ENVELOPE_START = "" +
@@ -45,7 +46,7 @@
       state.config = parseRuntimeConfig();
       applyConfigToUi(state.config);
       setStepText(1, "Runtime configuration loaded");
-      runReportWorkflow();
+      setStatus("Ready to report the selected message.", "pending");
     });
   }
 
@@ -112,6 +113,12 @@
         failWorkflow("Failed to extract the MIME content from the message.", errorMessage);
       });
     }, function (errorMessage) {
+      if (isLegacyTokenBlockedError(errorMessage)) {
+        state.ewsBlocked = true;
+        runManualDraftFallback(itemId, "Your tenant blocks legacy Exchange tokens, so direct EWS submission is unavailable.");
+        return;
+      }
+
       // Some tenants intermittently fail this optional header lookup with a generic internal error.
       // Continue as a normal report so the workflow is not blocked.
       if (isInternalEwsError(errorMessage)) {
@@ -153,6 +160,8 @@
 
     if (isSimulation) {
       setStatus("Simulation message detected.", "success");
+    } else if (state.ewsBlocked) {
+      setStatus("Report draft opened. Please send it to complete reporting.", "success");
     } else {
       setStatus("Phishing report completed.", "success");
     }
@@ -214,6 +223,13 @@
     makeEwsRequest(wrapInExchange2013Envelope(body), function () {
       onSuccess();
     }, function (errorMessage) {
+      if (isLegacyTokenBlockedError(errorMessage)) {
+        state.ewsBlocked = true;
+        runManualDraftFallback(getCurrentEwsItemId(), "Your tenant blocks legacy Exchange tokens, so direct EWS submission is unavailable.");
+        onSuccess();
+        return;
+      }
+
       if (!isInternalEwsError(errorMessage)) {
         onError(errorMessage);
         return;
@@ -237,7 +253,65 @@
 
     makeEwsRequest(wrapInExchange2013Envelope(body), function () {
       onSuccess();
-    }, onError);
+    }, function (errorMessage) {
+      if (isLegacyTokenBlockedError(errorMessage)) {
+        state.ewsBlocked = true;
+        onSuccess();
+        return;
+      }
+
+      onError(errorMessage);
+    });
+  }
+
+  function runManualDraftFallback(itemId, reason) {
+    var mailbox = Office.context && Office.context.mailbox;
+    if (!mailbox || !mailbox.displayNewMessageForm) {
+      failWorkflow("Automatic submission is unavailable.", reason || "This Outlook client cannot open a draft message.");
+      return;
+    }
+
+    var recipients = (state.config && state.config.recipients) ? state.config.recipients : [];
+    if (!recipients.length) {
+      failWorkflow("Automatic submission is unavailable.", "No recipients were configured for fallback reporting.");
+      return;
+    }
+
+    var subject = "[" + (state.config ? state.config.prefix : "Report") + "] " + getCurrentItemSubject();
+    var note = reason || "Direct EWS submission is unavailable in this tenant.";
+    var body = buildManualFallbackBody(itemId, note);
+
+    try {
+      mailbox.displayNewMessageForm({
+        toRecipients: recipients,
+        subject: subject,
+        htmlBody: body
+      });
+      finishWorkflow("A prefilled report draft was opened. Please review and send it.", false);
+    } catch (error) {
+      failWorkflow("Automatic submission is unavailable.", String(error && error.message ? error.message : error));
+    }
+  }
+
+  function buildManualFallbackBody(itemId, reason) {
+    var item = Office.context && Office.context.mailbox && Office.context.mailbox.item;
+    var fromAddress = "Unknown sender";
+    if (item && item.from && item.from.emailAddress) {
+      fromAddress = item.from.emailAddress;
+    }
+
+    var lines = [];
+    lines.push(xmlEscape(state.config && state.config.body ? state.config.body : "Suspicious message report."));
+    lines.push("");
+    lines.push(xmlEscape("Automatic EWS submission is unavailable: " + reason));
+    lines.push(xmlEscape("Original subject: " + getCurrentItemSubject()));
+    lines.push(xmlEscape("Original sender: " + fromAddress));
+    if (itemId) {
+      lines.push(xmlEscape("Original item id: " + itemId));
+    }
+
+    lines.push(xmlEscape("Action required: please send this report draft."));
+    return "<p>" + lines.join("</p><p>") + "</p>";
   }
 
   function makeEwsRequest(soapEnvelope, onSuccess, onError) {
@@ -790,6 +864,13 @@
   function isInternalEwsError(errorMessage) {
     var text = trim(errorMessage || "").toLowerCase();
     return text.indexOf("internal error") > -1 || text.indexOf("errorinternalservererror") > -1;
+  }
+
+  function isLegacyTokenBlockedError(errorMessage) {
+    var text = trim(errorMessage || "").toLowerCase();
+    return text.indexOf("legacy exchange token retrieval is no longer supported") > -1 ||
+      text.indexOf("errorforbiddenclientaccesstokenrequest") > -1 ||
+      text.indexOf("forbiddenclientaccesstokenrequest") > -1;
   }
 
   function xmlEscape(value) {
