@@ -112,6 +112,37 @@
         failWorkflow("Failed to extract the MIME content from the message.", errorMessage);
       });
     }, function (errorMessage) {
+      // Some tenants intermittently fail this optional header lookup with a generic internal error.
+      // Continue as a normal report so the workflow is not blocked.
+      if (isInternalEwsError(errorMessage)) {
+        logToConsole("Simulation header lookup failed; continuing report flow. Details: " + errorMessage);
+        setStepText(2, "Header check unavailable, continuing report flow");
+        setStatus("Extracting MIME content...", "pending");
+
+        fetchMimeContent(itemId, function (mimeContentBase64) {
+          setStepText(3, "Sending phishing report to security recipients");
+          setStatus("Submitting report...", "pending");
+
+          sendPhishingReport(mimeContentBase64, function () {
+            setStepText(3, "Security report sent");
+            setStepText(4, "Moving original message to Deleted Items");
+            setStatus("Moving message to Deleted Items...", "pending");
+
+            moveMessageToDeletedItems(itemId, function () {
+              setStepText(4, "Original message moved to Deleted Items");
+              finishWorkflow(state.config.phish_msg, false);
+            }, function (moveErrorMessage) {
+              failWorkflow("The report was sent, but the original message could not be moved.", moveErrorMessage);
+            });
+          }, function (reportErrorMessage) {
+            failWorkflow("Failed to submit the phishing report.", reportErrorMessage);
+          });
+        }, function (mimeErrorMessage) {
+          failWorkflow("Failed to extract the MIME content from the message.", mimeErrorMessage);
+        });
+        return;
+      }
+
       failWorkflow("Failed to read the message headers.", errorMessage);
     });
   }
@@ -182,7 +213,23 @@
     var body = buildCreateItemBody(subject, state.config.body, recipients, mimeContentBase64);
     makeEwsRequest(wrapInExchange2013Envelope(body), function () {
       onSuccess();
-    }, onError);
+    }, function (errorMessage) {
+      if (!isInternalEwsError(errorMessage)) {
+        onError(errorMessage);
+        return;
+      }
+
+      // Fallback path for environments where EML attachment submission is rejected.
+      var fallbackBodyText = state.config.body + "\n\nOriginal message subject: " + getCurrentItemSubject();
+      var fallbackBody = buildCreateItemBodyWithoutAttachment(subject, fallbackBodyText, recipients);
+
+      logToConsole("Primary report submission failed, trying fallback message-only submission. Details: " + errorMessage);
+      makeEwsRequest(wrapInExchange2013Envelope(fallbackBody), function () {
+        onSuccess();
+      }, function (fallbackErrorMessage) {
+        onError(fallbackErrorMessage || errorMessage);
+      });
+    });
   }
 
   function moveMessageToDeletedItems(itemId, onSuccess, onError) {
@@ -247,6 +294,26 @@
       "<t:Content>" + cleanedMime + "</t:Content>" +
       "</t:FileAttachment>" +
       "</t:Attachments>" +
+      "</t:Message>" +
+      "</m:Items>" +
+      "</m:CreateItem>";
+  }
+
+  function buildCreateItemBodyWithoutAttachment(subject, reportBody, recipients) {
+    var recipientsXml = "";
+    var i;
+
+    for (i = 0; i < recipients.length; i += 1) {
+      recipientsXml += "<t:Mailbox><t:EmailAddress>" + xmlEscape(recipients[i]) + "</t:EmailAddress></t:Mailbox>";
+    }
+
+    return "" +
+      "<m:CreateItem MessageDisposition=\"SendOnly\">" +
+      "<m:Items>" +
+      "<t:Message>" +
+      "<t:Subject>" + xmlEscape(subject) + "</t:Subject>" +
+      "<t:Body BodyType=\"Text\">" + xmlEscape(reportBody) + "</t:Body>" +
+      "<t:ToRecipients>" + recipientsXml + "</t:ToRecipients>" +
       "</t:Message>" +
       "</m:Items>" +
       "</m:CreateItem>";
@@ -718,6 +785,11 @@
     }
 
     return "Office.js operation failed.";
+  }
+
+  function isInternalEwsError(errorMessage) {
+    var text = trim(errorMessage || "").toLowerCase();
+    return text.indexOf("internal error") > -1 || text.indexOf("errorinternalservererror") > -1;
   }
 
   function xmlEscape(value) {
