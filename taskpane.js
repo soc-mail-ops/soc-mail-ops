@@ -90,27 +90,22 @@
       }
 
       setStepText(2, "No simulation header found");
-      setStatus("Extracting MIME content...", "pending");
-      fetchMimeContent(itemId, function (mimeContentBase64) {
-        setStepText(3, "Sending phishing report to security recipients");
-        setStatus("Submitting report...", "pending");
+      setStepText(3, "Forwarding message to security recipients");
+      setStatus("Submitting report...", "pending");
 
-        sendPhishingReport(mimeContentBase64, function () {
-          setStepText(3, "Security report sent");
-          setStepText(4, "Moving original message to Deleted Items");
-          setStatus("Moving message to Deleted Items...", "pending");
+      sendPhishingReport(itemId, function () {
+        setStepText(3, "Security report sent");
+        setStepText(4, "Moving original message to Deleted Items");
+        setStatus("Moving message to Deleted Items...", "pending");
 
-          moveMessageToDeletedItems(itemId, function () {
-            setStepText(4, "Original message moved to Deleted Items");
-            finishWorkflow(state.config.phish_msg, false);
-          }, function (errorMessage) {
-            failWorkflow("The report was sent, but the original message could not be moved.", errorMessage);
-          });
+        moveMessageToDeletedItems(itemId, function () {
+          setStepText(4, "Original message moved to Deleted Items");
+          finishWorkflow(state.config.phish_msg, false);
         }, function (errorMessage) {
-          failWorkflow("Failed to submit the phishing report.", errorMessage);
+          failWorkflow("The report was sent, but the original message could not be moved.", errorMessage);
         });
       }, function (errorMessage) {
-        failWorkflow("Failed to extract the MIME content from the message.", errorMessage);
+        failWorkflow("Failed to submit the phishing report.", errorMessage);
       });
     }, function (errorMessage) {
       if (isLegacyTokenBlockedError(errorMessage)) {
@@ -124,28 +119,22 @@
       if (isInternalEwsError(errorMessage)) {
         logToConsole("Simulation header lookup failed; continuing report flow. Details: " + errorMessage);
         setStepText(2, "Header check unavailable, continuing report flow");
-        setStatus("Extracting MIME content...", "pending");
+        setStepText(3, "Forwarding message to security recipients");
+        setStatus("Submitting report...", "pending");
 
-        fetchMimeContent(itemId, function (mimeContentBase64) {
-          setStepText(3, "Sending phishing report to security recipients");
-          setStatus("Submitting report...", "pending");
+        sendPhishingReport(itemId, function () {
+          setStepText(3, "Security report sent");
+          setStepText(4, "Moving original message to Deleted Items");
+          setStatus("Moving message to Deleted Items...", "pending");
 
-          sendPhishingReport(mimeContentBase64, function () {
-            setStepText(3, "Security report sent");
-            setStepText(4, "Moving original message to Deleted Items");
-            setStatus("Moving message to Deleted Items...", "pending");
-
-            moveMessageToDeletedItems(itemId, function () {
-              setStepText(4, "Original message moved to Deleted Items");
-              finishWorkflow(state.config.phish_msg, false);
-            }, function (moveErrorMessage) {
-              failWorkflow("The report was sent, but the original message could not be moved.", moveErrorMessage);
-            });
-          }, function (reportErrorMessage) {
-            failWorkflow("Failed to submit the phishing report.", reportErrorMessage);
+          moveMessageToDeletedItems(itemId, function () {
+            setStepText(4, "Original message moved to Deleted Items");
+            finishWorkflow(state.config.phish_msg, false);
+          }, function (moveErrorMessage) {
+            failWorkflow("The report was sent, but the original message could not be moved.", moveErrorMessage);
           });
-        }, function (mimeErrorMessage) {
-          failWorkflow("Failed to extract the MIME content from the message.", mimeErrorMessage);
+        }, function (reportErrorMessage) {
+          failWorkflow("Failed to submit the phishing report.", reportErrorMessage);
         });
         return;
       }
@@ -211,21 +200,20 @@
     }, onError);
   }
 
-  function sendPhishingReport(mimeContentBase64, onSuccess, onError) {
+  function sendPhishingReport(itemId, onSuccess, onError) {
     var recipients = state.config.recipients || [];
     if (!recipients.length) {
       onError("No recipients were provided in the payload.");
       return;
     }
 
-    var subject = "[" + state.config.prefix + "] " + getCurrentItemSubject();
-    var body = buildCreateItemBody(subject, state.config.body, recipients, mimeContentBase64);
+    var body = buildForwardItemBody(state.config.body, recipients, itemId);
     makeEwsRequest(wrapInExchange2013Envelope(body), function () {
       onSuccess();
     }, function (errorMessage) {
       if (isLegacyTokenBlockedError(errorMessage)) {
         state.ewsBlocked = true;
-        runManualDraftFallback(getCurrentEwsItemId(), "Your tenant blocks legacy Exchange tokens, so direct EWS submission is unavailable.");
+        runManualDraftFallback(itemId, "Your tenant blocks legacy Exchange tokens, so direct EWS submission is unavailable.");
         onSuccess();
         return;
       }
@@ -235,7 +223,8 @@
         return;
       }
 
-      // Fallback path for environments where EML attachment submission is rejected.
+      // Fallback path for environments where forwarding fails for transient EWS reasons.
+      var subject = "[" + state.config.prefix + "] " + getCurrentItemSubject();
       var fallbackBodyText = state.config.body + "\n\nOriginal message subject: " + getCurrentItemSubject();
       var fallbackBody = buildCreateItemBodyWithoutAttachment(subject, fallbackBodyText, recipients);
 
@@ -246,6 +235,28 @@
         onError(fallbackErrorMessage || errorMessage);
       });
     });
+  }
+
+  function buildForwardItemBody(reportBody, recipients, itemId) {
+    var recipientsXml = "";
+    var i;
+
+    for (i = 0; i < recipients.length; i += 1) {
+      recipientsXml += "<t:Mailbox><t:EmailAddress>" + xmlEscape(recipients[i]) + "</t:EmailAddress></t:Mailbox>";
+    }
+
+    var note = trim(reportBody || "This email was reported as suspicious.");
+
+    return "" +
+      "<m:CreateItem MessageDisposition=\"SendAndSaveCopy\">" +
+      "<m:Items>" +
+      "<t:ForwardItem>" +
+      "<t:ToRecipients>" + recipientsXml + "</t:ToRecipients>" +
+      "<t:ReferenceItemId Id=\"" + xmlEscape(itemId) + "\" />" +
+      "<t:NewBodyContent BodyType=\"Text\">" + xmlEscape(note) + "</t:NewBodyContent>" +
+      "</t:ForwardItem>" +
+      "</m:Items>" +
+      "</m:CreateItem>";
   }
 
   function moveMessageToDeletedItems(itemId, onSuccess, onError) {
