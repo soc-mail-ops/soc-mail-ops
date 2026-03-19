@@ -5,7 +5,7 @@
     prefix: "Report Phishing",
     recipients: ["iiahmad435@gmail.com","202112720@std-zuj.edu.jo"
     ],
-    body: "Thank you for reporting this message -- {0}.",
+    body: "Thank you for reporting this message.",
     non_phish_msg: "This message was identified as a simulation and was not submitted.",
     phish_msg: "Thank you. The suspicious message was reported and moved to Deleted Items.",
     env: "prod"
@@ -14,8 +14,7 @@
   var state = {
     config: null,
     isProcessing: false,
-    isCompleted: false,
-    ewsBlocked: false
+    isCompleted: false
   };
 
   var EWS_ENVELOPE_START = "" +
@@ -46,7 +45,7 @@
       state.config = parseRuntimeConfig();
       applyConfigToUi(state.config);
       setStepText(1, "Runtime configuration loaded");
-      setStatus("Ready to report the selected message.", "pending");
+      runReportWorkflow();
     });
   }
 
@@ -90,39 +89,12 @@
       }
 
       setStepText(2, "No simulation header found");
-      setStepText(3, "Forwarding message to security recipients");
-      setStatus("Submitting report...", "pending");
-
-      sendPhishingReport(itemId, function () {
-        setStepText(3, "Security report sent");
-        setStepText(4, "Moving original message to Deleted Items");
-        setStatus("Moving message to Deleted Items...", "pending");
-
-        moveMessageToDeletedItems(itemId, function () {
-          setStepText(4, "Original message moved to Deleted Items");
-          finishWorkflow(state.config.phish_msg, false);
-        }, function (errorMessage) {
-          failWorkflow("The report was sent, but the original message could not be moved.", errorMessage);
-        });
-      }, function (errorMessage) {
-        failWorkflow("Failed to submit the phishing report.", errorMessage);
-      });
-    }, function (errorMessage) {
-      if (isLegacyTokenBlockedError(errorMessage)) {
-        state.ewsBlocked = true;
-        runManualDraftFallback(itemId, "Your tenant blocks legacy Exchange tokens, so direct EWS submission is unavailable.");
-        return;
-      }
-
-      // Some tenants intermittently fail this optional header lookup with a generic internal error.
-      // Continue as a normal report so the workflow is not blocked.
-      if (isInternalEwsError(errorMessage)) {
-        logToConsole("Simulation header lookup failed; continuing report flow. Details: " + errorMessage);
-        setStepText(2, "Header check unavailable, continuing report flow");
-        setStepText(3, "Forwarding message to security recipients");
+      setStatus("Extracting MIME content...", "pending");
+      fetchMimeContent(itemId, function (mimeContentBase64) {
+        setStepText(3, "Sending phishing report to security recipients");
         setStatus("Submitting report...", "pending");
 
-        sendPhishingReport(itemId, function () {
+        sendPhishingReport(mimeContentBase64, function () {
           setStepText(3, "Security report sent");
           setStepText(4, "Moving original message to Deleted Items");
           setStatus("Moving message to Deleted Items...", "pending");
@@ -130,15 +102,16 @@
           moveMessageToDeletedItems(itemId, function () {
             setStepText(4, "Original message moved to Deleted Items");
             finishWorkflow(state.config.phish_msg, false);
-          }, function (moveErrorMessage) {
-            failWorkflow("The report was sent, but the original message could not be moved.", moveErrorMessage);
+          }, function (errorMessage) {
+            failWorkflow("The report was sent, but the original message could not be moved.", errorMessage);
           });
-        }, function (reportErrorMessage) {
-          failWorkflow("Failed to submit the phishing report.", reportErrorMessage);
+        }, function (errorMessage) {
+          failWorkflow("Failed to submit the phishing report.", errorMessage);
         });
-        return;
-      }
-
+      }, function (errorMessage) {
+        failWorkflow("Failed to extract the MIME content from the message.", errorMessage);
+      });
+    }, function (errorMessage) {
       failWorkflow("Failed to read the message headers.", errorMessage);
     });
   }
@@ -149,8 +122,6 @@
 
     if (isSimulation) {
       setStatus("Simulation message detected.", "success");
-    } else if (state.ewsBlocked) {
-      setStatus("Report draft opened. Please send it to complete reporting.", "success");
     } else {
       setStatus("Phishing report completed.", "success");
     }
@@ -200,63 +171,18 @@
     }, onError);
   }
 
-  function sendPhishingReport(itemId, onSuccess, onError) {
+  function sendPhishingReport(mimeContentBase64, onSuccess, onError) {
     var recipients = state.config.recipients || [];
     if (!recipients.length) {
       onError("No recipients were provided in the payload.");
       return;
     }
 
-    var body = buildForwardItemBody(state.config.body, recipients, itemId);
+    var subject = "[" + state.config.prefix + "] " + getCurrentItemSubject();
+    var body = buildCreateItemBody(subject, state.config.body, recipients, mimeContentBase64);
     makeEwsRequest(wrapInExchange2013Envelope(body), function () {
       onSuccess();
-    }, function (errorMessage) {
-      if (isLegacyTokenBlockedError(errorMessage)) {
-        state.ewsBlocked = true;
-        runManualDraftFallback(itemId, "Your tenant blocks legacy Exchange tokens, so direct EWS submission is unavailable.");
-        onSuccess();
-        return;
-      }
-
-      if (!isInternalEwsError(errorMessage)) {
-        onError(errorMessage);
-        return;
-      }
-
-      // Fallback path for environments where forwarding fails for transient EWS reasons.
-      var subject = "[" + state.config.prefix + "] " + getCurrentItemSubject();
-      var fallbackBodyText = state.config.body + "\n\nOriginal message subject: " + getCurrentItemSubject();
-      var fallbackBody = buildCreateItemBodyWithoutAttachment(subject, fallbackBodyText, recipients);
-
-      logToConsole("Primary report submission failed, trying fallback message-only submission. Details: " + errorMessage);
-      makeEwsRequest(wrapInExchange2013Envelope(fallbackBody), function () {
-        onSuccess();
-      }, function (fallbackErrorMessage) {
-        onError(fallbackErrorMessage || errorMessage);
-      });
-    });
-  }
-
-  function buildForwardItemBody(reportBody, recipients, itemId) {
-    var recipientsXml = "";
-    var i;
-
-    for (i = 0; i < recipients.length; i += 1) {
-      recipientsXml += "<t:Mailbox><t:EmailAddress>" + xmlEscape(recipients[i]) + "</t:EmailAddress></t:Mailbox>";
-    }
-
-    var note = trim(reportBody || "This email was reported as suspicious.");
-
-    return "" +
-      "<m:CreateItem MessageDisposition=\"SendAndSaveCopy\">" +
-      "<m:Items>" +
-      "<t:ForwardItem>" +
-      "<t:ToRecipients>" + recipientsXml + "</t:ToRecipients>" +
-      "<t:ReferenceItemId Id=\"" + xmlEscape(itemId) + "\" />" +
-      "<t:NewBodyContent BodyType=\"Text\">" + xmlEscape(note) + "</t:NewBodyContent>" +
-      "</t:ForwardItem>" +
-      "</m:Items>" +
-      "</m:CreateItem>";
+    }, onError);
   }
 
   function moveMessageToDeletedItems(itemId, onSuccess, onError) {
@@ -264,65 +190,7 @@
 
     makeEwsRequest(wrapInExchange2013Envelope(body), function () {
       onSuccess();
-    }, function (errorMessage) {
-      if (isLegacyTokenBlockedError(errorMessage)) {
-        state.ewsBlocked = true;
-        onSuccess();
-        return;
-      }
-
-      onError(errorMessage);
-    });
-  }
-
-  function runManualDraftFallback(itemId, reason) {
-    var mailbox = Office.context && Office.context.mailbox;
-    if (!mailbox || !mailbox.displayNewMessageForm) {
-      failWorkflow("Automatic submission is unavailable.", reason || "This Outlook client cannot open a draft message.");
-      return;
-    }
-
-    var recipients = (state.config && state.config.recipients) ? state.config.recipients : [];
-    if (!recipients.length) {
-      failWorkflow("Automatic submission is unavailable.", "No recipients were configured for fallback reporting.");
-      return;
-    }
-
-    var subject = "[" + (state.config ? state.config.prefix : "Report") + "] " + getCurrentItemSubject();
-    var note = reason || "Direct EWS submission is unavailable in this tenant.";
-    var body = buildManualFallbackBody(itemId, note);
-
-    try {
-      mailbox.displayNewMessageForm({
-        toRecipients: recipients,
-        subject: subject,
-        htmlBody: body
-      });
-      finishWorkflow("A prefilled report draft was opened. Please review and send it.", false);
-    } catch (error) {
-      failWorkflow("Automatic submission is unavailable.", String(error && error.message ? error.message : error));
-    }
-  }
-
-  function buildManualFallbackBody(itemId, reason) {
-    var item = Office.context && Office.context.mailbox && Office.context.mailbox.item;
-    var fromAddress = "Unknown sender";
-    if (item && item.from && item.from.emailAddress) {
-      fromAddress = item.from.emailAddress;
-    }
-
-    var lines = [];
-    lines.push(xmlEscape(state.config && state.config.body ? state.config.body : "Suspicious message report."));
-    lines.push("");
-    lines.push(xmlEscape("Automatic EWS submission is unavailable: " + reason));
-    lines.push(xmlEscape("Original subject: " + getCurrentItemSubject()));
-    lines.push(xmlEscape("Original sender: " + fromAddress));
-    if (itemId) {
-      lines.push(xmlEscape("Original item id: " + itemId));
-    }
-
-    lines.push(xmlEscape("Action required: please send this report draft."));
-    return "<p>" + lines.join("</p><p>") + "</p>";
+    }, onError);
   }
 
   function makeEwsRequest(soapEnvelope, onSuccess, onError) {
@@ -379,26 +247,6 @@
       "<t:Content>" + cleanedMime + "</t:Content>" +
       "</t:FileAttachment>" +
       "</t:Attachments>" +
-      "</t:Message>" +
-      "</m:Items>" +
-      "</m:CreateItem>";
-  }
-
-  function buildCreateItemBodyWithoutAttachment(subject, reportBody, recipients) {
-    var recipientsXml = "";
-    var i;
-
-    for (i = 0; i < recipients.length; i += 1) {
-      recipientsXml += "<t:Mailbox><t:EmailAddress>" + xmlEscape(recipients[i]) + "</t:EmailAddress></t:Mailbox>";
-    }
-
-    return "" +
-      "<m:CreateItem MessageDisposition=\"SendOnly\">" +
-      "<m:Items>" +
-      "<t:Message>" +
-      "<t:Subject>" + xmlEscape(subject) + "</t:Subject>" +
-      "<t:Body BodyType=\"Text\">" + xmlEscape(reportBody) + "</t:Body>" +
-      "<t:ToRecipients>" + recipientsXml + "</t:ToRecipients>" +
       "</t:Message>" +
       "</m:Items>" +
       "</m:CreateItem>";
@@ -870,18 +718,6 @@
     }
 
     return "Office.js operation failed.";
-  }
-
-  function isInternalEwsError(errorMessage) {
-    var text = trim(errorMessage || "").toLowerCase();
-    return text.indexOf("internal error") > -1 || text.indexOf("errorinternalservererror") > -1;
-  }
-
-  function isLegacyTokenBlockedError(errorMessage) {
-    var text = trim(errorMessage || "").toLowerCase();
-    return text.indexOf("legacy exchange token retrieval is no longer supported") > -1 ||
-      text.indexOf("errorforbiddenclientaccesstokenrequest") > -1 ||
-      text.indexOf("forbiddenclientaccesstokenrequest") > -1;
   }
 
   function xmlEscape(value) {
