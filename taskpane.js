@@ -14,7 +14,8 @@
   var state = {
     config: null,
     isProcessing: false,
-    isCompleted: false
+    isCompleted: false,
+    officeReady: false
   };
 
   var EWS_ENVELOPE_START = "" +
@@ -28,6 +29,7 @@
 
   function bootstrap() {
     bindReportButton();
+    disableReportButton(true);
 
     if (typeof Office === "undefined" || !Office.onReady) {
       setStatus("Office.js is unavailable. Open this page inside Outlook.", "error");
@@ -35,7 +37,13 @@
       return;
     }
 
+    if (typeof Office.initialize !== "function") {
+      Office.initialize = function () {};
+    }
+
     Office.onReady(function (info) {
+      state.officeReady = true;
+
       if (!info || info.host !== Office.HostType.Outlook) {
         setStatus("This add-in can only run inside Outlook.", "error");
         disableReportButton(true);
@@ -45,7 +53,8 @@
       state.config = parseRuntimeConfig();
       applyConfigToUi(state.config);
       setStepText(1, "Runtime configuration loaded");
-      runReportWorkflow();
+      setStatus("Ready to report the selected message.", "pending");
+      disableReportButton(false);
     });
   }
 
@@ -56,6 +65,11 @@
     }
 
     button.onclick = function () {
+      if (!state.officeReady) {
+        setStatus("Outlook is still initializing. Please try again in a moment.", "pending");
+        return;
+      }
+
       if (!state.isProcessing && !state.isCompleted) {
         runReportWorkflow();
       }
@@ -63,6 +77,11 @@
   }
 
   function runReportWorkflow() {
+    if (!state.officeReady) {
+      setStatus("Outlook is still initializing. Please wait...", "pending");
+      return;
+    }
+
     if (state.isProcessing || state.isCompleted) {
       return;
     }
