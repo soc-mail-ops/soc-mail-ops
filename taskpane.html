@@ -1,38 +1,39 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Phishing Reporter</title>
-  <link rel="stylesheet" href="taskpane.css" />
-  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOC Phishing Reporter</title>
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <script src="taskpane.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 15px;
+            color: #333;
+        }
+        .header { font-weight: bold; font-size: 16px; margin-bottom: 10px; }
+        .description { font-size: 13px; margin-bottom: 20px; color: #666; }
+        .btn-report {
+            background-color: #d9534f;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            width: 100%;
+            cursor: pointer;
+            font-size: 14px;
+            border-radius: 4px;
+        }
+        .btn-report:disabled { background-color: #ccc; cursor: not-allowed; }
+        .status { margin-top: 15px; font-size: 13px; font-weight: bold; }
+        .success { color: #28a745; }
+        .error { color: #dc3545; }
+    </style>
 </head>
 <body>
-  <main class="shell" aria-labelledby="titleText">
-    <header class="hero">
-      <p id="envBadge" class="env-badge" hidden>prod</p>
-      <h1 id="titleText">Phishing Reporter</h1>
-      <p id="subtitleText">Analyzing the selected message and preparing a secure report.</p>
-    </header>
-
-    <section class="panel" aria-live="polite">
-      <p id="statusText" class="status status-pending">Initializing Outlook add-in...</p>
-      <button id="reportButton" class="action-button" type="button">Report this message</button>
-      <p id="resultText" class="result"></p>
-    </section>
-
-    <section class="timeline" aria-label="Execution progress">
-      <p class="timeline-title">Workflow</p>
-      <ol class="timeline-list">
-        <li id="step-1">1. Read runtime configuration</li>
-        <li id="step-2">2. Inspect message headers</li>
-        <li id="step-3">3. Submit report to security</li>
-        <li id="step-4">4. Move message to Deleted Items</li>
-      </ol>
-    </section>
-  </main>
-
-  <script src="taskpane.js"></script>
+    <div class="header">Report Suspicious Email</div>
+    <div class="description">Clicking the button below will securely package this email and route it to the Security Operations Center for analysis.</div>
+    <button id="reportButton" class="btn-report">Report to SOC</button>
+    <div id="statusText" class="status"></div>
 </body>
 </html>
