@@ -626,13 +626,68 @@
 
   function getCurrentItemSubject() {
     var mailbox = Office.context && Office.context.mailbox;
+    var item = mailbox && mailbox.item;
+    var subject = item && item.subject ? item.subject : "(No subject)";
+    return trim(subject);
+  }
 
-    // Token-free mode: do not call EWS in tenants where legacy callback tokens are blocked.
-    state.ewsBlocked = true;
-    setStepText(2, "Token-free reporting mode");
-    setStepText(3, "Opening prefilled report draft");
-    setStepText(4, "Send the draft to complete reporting");
-    runManualDraftFallback(itemId, "Direct EWS submission is disabled to avoid legacy token errors in this tenant.");
+  function parseQueryString(queryString) {
+    var result = {};
+    if (!queryString) {
+      return result;
+    }
+
+    var pairs = queryString.split("&");
+    var i;
+    for (i = 0; i < pairs.length; i += 1) {
+      if (!pairs[i]) {
+        continue;
+      }
+
+      var separator = pairs[i].indexOf("=");
+      var rawKey = separator > -1 ? pairs[i].substring(0, separator) : pairs[i];
+      var rawValue = separator > -1 ? pairs[i].substring(separator + 1) : "";
+
+      var key = safeDecodeURIComponent(rawKey).toLowerCase();
+      var value = safeDecodeURIComponent(rawValue);
+
+      if (key) {
+        result[key] = value;
+      }
+    }
+
+    return result;
+  }
+
+  function parseXml(xmlText) {
+    if (!xmlText) {
+      return null;
+    }
+
+    try {
+      if (window.DOMParser) {
+        return (new DOMParser()).parseFromString(xmlText, "text/xml");
+      }
+
+      if (window.ActiveXObject) {
+        var xmlDoc = new ActiveXObject("Microsoft.XMLDOM");
+        xmlDoc.async = false;
+        xmlDoc.loadXML(xmlText);
+        return xmlDoc;
+      }
+    } catch (error) {
+      return null;
+    }
+
+    return null;
+  }
+
+  function getElementsByLocalName(xmlNode, localName) {
+    if (!xmlNode || !localName) {
+      return [];
+    }
+
+    if (xmlNode.getElementsByTagNameNS) {
       var byNamespace = xmlNode.getElementsByTagNameNS("*", localName);
       if (byNamespace && byNamespace.length) {
         return byNamespace;
